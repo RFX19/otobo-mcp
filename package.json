@@ -1,0 +1,53 @@
+{
+  "name": "mcp-otobo",
+  "version": "1.0.0",
+  "description": "MCP server for Otobo ticket system — search, create, update, and manage tickets via the Generic Interface REST API",
+  "type": "module",
+  "main": "build/index.js",
+  "bin": {
+    "mcp-otobo": "build/index.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node build/index.js",
+    "dev": "tsc --watch"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "otobo",
+    "otrs",
+    "itsm",
+    "helpdesk",
+    "ticketing",
+    "ai",
+    "claude",
+    "chatgpt"
+  ],
+  "author": "Dominik Nussbaum",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/domnussbaum/otobo-mcp.git"
+  },
+  "homepage": "https://github.com/domnussbaum/otobo-mcp#readme",
+  "bugs": {
+    "url": "https://github.com/domnussbaum/otobo-mcp/issues"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "files": [
+    "build",
+    "README.md",
+    "LICENSE"
+  ],
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.1",
+    "zod": "^3.24.2"
+  },
+  "devDependencies": {
+    "@types/node": "^22.13.10",
+    "typescript": "^5.8.2"
+  }
+}

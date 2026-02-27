@@ -1,0 +1,412 @@
+# mcp-otobo
+
+A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for [Otobo](https://otobo.io/) — the open-source ITSM and helpdesk system. This server enables AI assistants to search, create, update, and manage tickets in your Otobo instance through the Generic Interface REST API.
+
+## Features
+
+- **Search tickets** by queue, state, priority, customer, title, date ranges, and more
+- **Get ticket details** including full communication history and dynamic fields
+- **Create tickets** with initial articles
+- **Update tickets** — change state, queue, priority, owner, add articles
+- **Close tickets** with optional closing notes
+- **Add internal notes** to tickets
+- **View ticket history** — full audit trail of changes
+- **List queues, states, and priorities** from your Otobo instance
+
+## Prerequisites
+
+- **Node.js** 18 or later
+- An **Otobo instance** with a configured Generic Interface web service (see [Otobo Setup](#otobo-setup))
+- An **agent account** with API access permissions
+
+## Installation
+
+```bash
+npm install -g mcp-otobo
+```
+
+Or run directly with npx:
+
+```bash
+npx mcp-otobo
+```
+
+Or clone and build from source:
+
+```bash
+git clone https://github.com/domnussbaum/otobo-mcp.git
+cd mcp-otobo
+npm install
+npm run build
+```
+
+## Configuration
+
+The server is configured via environment variables:
+
+| Variable | Required | Default | Description |
+|---|---|---|---|
+| `OTOBO_BASE_URL` | Yes | — | Your Otobo instance URL (e.g. `https://otobo.example.com`) |
+| `OTOBO_USERNAME` | Yes | — | Agent username for API access |
+| `OTOBO_PASSWORD` | Yes | — | Agent password |
+| `OTOBO_WEBSERVICE` | No | `GenericTicketConnectorREST` | Web service name configured in Otobo |
+| `OTOBO_UNSAFE_SSL` | No | `false` | Set to `true` to allow self-signed/internal SSL certificates |
+
+Copy `.env.example` to `.env` and fill in your values:
+
+```bash
+cp .env.example .env
+```
+
+## Available Tools
+
+### Core Ticket Operations
+
+| Tool | Description |
+|---|---|
+| `search_tickets` | Search tickets by queue, state, priority, customer, title, ticket number, date ranges |
+| `get_ticket` | Get full ticket details with articles and dynamic fields |
+| `create_ticket` | Create a new ticket with first article |
+| `update_ticket` | Update ticket fields and optionally add an article |
+
+### History
+
+| Tool | Description |
+|---|---|
+| `get_ticket_history` | Get the full change history of a ticket |
+
+### Metadata
+
+| Tool | Description |
+|---|---|
+| `list_queues` | List available queues in the system |
+| `list_states` | List available ticket states |
+| `list_priorities` | List available ticket priorities |
+
+### Convenience
+
+| Tool | Description |
+|---|---|
+| `close_ticket` | Close a ticket with an optional note |
+| `add_note` | Add an internal note to a ticket |
+
+## Integration Examples
+
+### Claude Desktop
+
+Add to your `claude_desktop_config.json`:
+
+**macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+
+```json
+{
+  "mcpServers": {
+    "otobo": {
+      "command": "npx",
+      "args": ["-y", "mcp-otobo"],
+      "env": {
+        "OTOBO_BASE_URL": "https://otobo.example.com",
+        "OTOBO_USERNAME": "your-agent-user",
+        "OTOBO_PASSWORD": "your-agent-password",
+        "OTOBO_WEBSERVICE": "GenericTicketConnectorREST"
+      }
+    }
+  }
+}
+```
+
+Or if installed from source:
+
+```json
+{
+  "mcpServers": {
+    "otobo": {
+      "command": "node",
+      "args": ["/absolute/path/to/mcp-otobo/build/index.js"],
+      "env": {
+        "OTOBO_BASE_URL": "https://otobo.example.com",
+        "OTOBO_USERNAME": "your-agent-user",
+        "OTOBO_PASSWORD": "your-agent-password"
+      }
+    }
+  }
+}
+```
+
+### Claude Code
+
+Add to your project's `.mcp.json` file:
+
+```json
+{
+  "mcpServers": {
+    "otobo": {
+      "command": "npx",
+      "args": ["-y", "mcp-otobo"],
+      "env": {
+        "OTOBO_BASE_URL": "https://otobo.example.com",
+        "OTOBO_USERNAME": "your-agent-user",
+        "OTOBO_PASSWORD": "your-agent-password",
+        "OTOBO_WEBSERVICE": "GenericTicketConnectorREST"
+      }
+    }
+  }
+}
+```
+
+Or add it via the CLI with environment variables:
+
+```bash
+claude mcp add otobo \
+  -e OTOBO_BASE_URL=https://otobo.example.com \
+  -e OTOBO_USERNAME=your-agent-user \
+  -e 'OTOBO_PASSWORD=your-agent-password' \
+  -e OTOBO_WEBSERVICE=GenericTicketConnectorREST \
+  -- npx -y mcp-otobo
+```
+
+### Cursor
+
+Add to your Cursor MCP settings (`.cursor/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "otobo": {
+      "command": "npx",
+      "args": ["-y", "mcp-otobo"],
+      "env": {
+        "OTOBO_BASE_URL": "https://otobo.example.com",
+        "OTOBO_USERNAME": "your-agent-user",
+        "OTOBO_PASSWORD": "your-agent-password",
+        "OTOBO_WEBSERVICE": "GenericTicketConnectorREST"
+      }
+    }
+  }
+}
+```
+
+### Windsurf
+
+Add to your Windsurf MCP configuration (`~/.windsurf/mcp.json`):
+
+```json
+{
+  "mcpServers": {
+    "otobo": {
+      "command": "npx",
+      "args": ["-y", "mcp-otobo"],
+      "env": {
+        "OTOBO_BASE_URL": "https://otobo.example.com",
+        "OTOBO_USERNAME": "your-agent-user",
+        "OTOBO_PASSWORD": "your-agent-password",
+        "OTOBO_WEBSERVICE": "GenericTicketConnectorREST"
+      }
+    }
+  }
+}
+```
+
+### ChatGPT / OpenAI (via MCP Bridge)
+
+ChatGPT does not natively support MCP. However, third-party MCP-to-OpenAI bridge tools exist that can expose any MCP server as an OpenAI-compatible function-calling API. Search for "MCP OpenAI bridge" or "MCP proxy" for current options.
+
+### Codex CLI
+
+Set up environment variables and configure MCP in your Codex configuration:
+
+```bash
+export OTOBO_BASE_URL=https://otobo.example.com
+export OTOBO_USERNAME=your-agent-user
+export OTOBO_PASSWORD='your-agent-password'
+
+codex --full-auto "Search for open tickets"
+```
+
+Or add to your `~/.codex/config.json`:
+
+```json
+{
+  "mcpServers": {
+    "otobo": {
+      "command": "npx",
+      "args": ["-y", "mcp-otobo"],
+      "env": {
+        "OTOBO_BASE_URL": "https://otobo.example.com",
+        "OTOBO_USERNAME": "your-agent-user",
+        "OTOBO_PASSWORD": "your-agent-password",
+        "OTOBO_WEBSERVICE": "GenericTicketConnectorREST"
+      }
+    }
+  }
+}
+```
+
+### Gemini CLI
+
+Add to your Gemini CLI MCP settings file (`~/.gemini/settings.json`):
+
+```json
+{
+  "mcpServers": {
+    "otobo": {
+      "command": "npx",
+      "args": ["-y", "mcp-otobo"],
+      "env": {
+        "OTOBO_BASE_URL": "https://otobo.example.com",
+        "OTOBO_USERNAME": "your-agent-user",
+        "OTOBO_PASSWORD": "your-agent-password",
+        "OTOBO_WEBSERVICE": "GenericTicketConnectorREST"
+      }
+    }
+  }
+}
+```
+
+### Generic MCP Client
+
+```typescript
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+
+const transport = new StdioClientTransport({
+  command: "npx",
+  args: ["-y", "mcp-otobo"],
+  env: {
+    OTOBO_BASE_URL: "https://otobo.example.com",
+    OTOBO_USERNAME: "your-agent-user",
+    OTOBO_PASSWORD: "your-agent-password",
+    OTOBO_WEBSERVICE: "GenericTicketConnectorREST",
+  },
+});
+
+const client = new Client({ name: "my-app", version: "1.0.0" });
+await client.connect(transport);
+
+// List available tools
+const tools = await client.listTools();
+console.log(tools);
+
+// Search for open tickets
+const result = await client.callTool("search_tickets", {
+  states: ["open", "new"],
+  limit: 10,
+});
+console.log(result);
+```
+
+## Otobo Setup
+
+To use this MCP server, your Otobo instance needs a properly configured **Generic Interface** web service.
+
+### Step 1: Create a Web Service
+
+1. Log in to Otobo as an admin
+2. Navigate to **Admin → Generic Interface → Web Services**
+3. Click **Add Web Service**
+4. Set:
+   - **Name**: `GenericTicketConnectorREST` (or your preferred name — must match `OTOBO_WEBSERVICE`)
+   - **Network Transport**: `HTTP::REST`
+
+### Step 2: Add Operations
+
+Add the following four operations to your web service. For each one:
+
+1. Click **Add Operation**
+2. Set the **Name** (e.g. `TicketCreate`)
+3. Select the **Operation-Backend**:
+
+| Name | Operation-Backend |
+|---|---|
+| `TicketCreate` | `Ticket::TicketCreate` |
+| `TicketGet` | `Ticket::TicketGet` |
+| `TicketSearch` | `Ticket::TicketSearch` |
+| `TicketUpdate` | `Ticket::TicketUpdate` |
+
+4. Leave mapping settings at their defaults
+5. Click **Save**
+
+### Step 3: Configure Transport & Route Mapping
+
+1. Back on the web service overview, go to **Network Transport → Configure**
+2. Set **Maximum message length**: `10000000` (or higher for large tickets)
+3. Configure the **Route mapping** for each operation:
+
+| Operation | Route | Request Method |
+|---|---|---|
+| `TicketCreate` | `/TicketCreate` | `POST` |
+| `TicketGet` | `/TicketGet` | `POST` |
+| `TicketSearch` | `/TicketSearch` | `POST` |
+| `TicketUpdate` | `/TicketUpdate` | `POST` |
+
+4. Save
+
+### Step 4: Create an API Agent
+
+> **Security note:** Once a REST web service is active, **any valid agent account** can authenticate against it. There is no way to restrict the web service itself to specific users. Access control is handled entirely through group and queue permissions. It is strongly recommended to create a dedicated API agent with minimal permissions.
+
+1. Navigate to **Admin → Agents**
+2. Create a dedicated agent account for API access (e.g. `api-user`)
+3. Create a dedicated group (e.g. `api-access`) under **Admin → Groups**
+4. Under **Admin → Agents ↔ Groups**, assign only the API agent to this group
+5. Under **Admin → Queues ↔ Groups**, grant access only to the queues the API should reach
+6. Use this agent's credentials for `OTOBO_USERNAME` and `OTOBO_PASSWORD`
+
+### Step 5: Verify
+
+Test your setup with curl:
+
+```bash
+curl -X POST \
+  "https://otobo.example.com/otobo/nph-genericinterface.pl/Webservice/GenericTicketConnectorREST/TicketSearch" \
+  -H "Content-Type: application/json" \
+  -d '{"UserLogin":"your-agent","Password":"your-password"}'
+```
+
+You should get a JSON response with ticket IDs.
+
+## Troubleshooting
+
+### "Missing required environment variable"
+
+Make sure all required environment variables are set. Check that your MCP client configuration passes the `env` block correctly.
+
+### "Otobo API error (HTTP 403)"
+
+Your agent account may lack the necessary permissions. Check:
+- The agent exists and is valid in Otobo
+- The agent has group permissions for the queues you're trying to access
+- The web service is active (not deactivated)
+
+### "Otobo API error (HTTP 404)"
+
+The web service endpoint is not found. Verify:
+- The web service name matches `OTOBO_WEBSERVICE`
+- The operations are configured with correct route mappings
+- The Otobo URL is correct and accessible
+
+### "Otobo API error (HTTP 500)"
+
+An internal server error in Otobo. Check:
+- Otobo system logs (`/opt/otobo/var/log/` or your log directory)
+- The request payload is valid (required fields like Queue, State, Priority)
+- Customer user exists in the system when creating tickets
+
+### Connection Issues
+
+- Ensure your Otobo instance is reachable from the machine running the MCP server
+- Check for firewalls, VPN requirements, or SSL certificate issues
+- For self-signed or internal SSL certificates, set `OTOBO_UNSAFE_SSL=true` in your environment configuration
+
+### "No tickets found" for list_queues/list_states/list_priorities
+
+These metadata tools discover values from existing tickets. If your system has no tickets yet, they return default values. Create a test ticket first, or use the known defaults:
+
+- **Queues**: `Raw`, `Junk`, `Misc`, `Postmaster` (depends on your setup)
+- **States**: `new`, `open`, `pending reminder`, `closed successful`, `closed unsuccessful`
+- **Priorities**: `1 very low`, `2 low`, `3 normal`, `4 high`, `5 very high`
+
+## License
+
+MIT
