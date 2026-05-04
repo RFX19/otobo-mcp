@@ -54,6 +54,7 @@ export interface TicketSearchFilters {
   Priorities?: string[];
   PriorityIDs?: number[];
   CustomerUserLogin?: string;
+  CustomerID?: string;
   OwnerIDs?: number[];
   Types?: string[];
   Locks?: string[];
@@ -64,6 +65,14 @@ export interface TicketSearchFilters {
   TicketCreateTimeOlderDate?: string;
   TicketLastChangeTimeNewerDate?: string;
   TicketLastChangeTimeOlderDate?: string;
+  // Article / fulltext search filters
+  Fulltext?: string;
+  MIMEBase_From?: string;
+  MIMEBase_To?: string;
+  MIMEBase_Cc?: string;
+  MIMEBase_Subject?: string;
+  MIMEBase_Body?: string;
+  ArchiveFlags?: string[];
 }
 
 export interface TicketGetOptions {
