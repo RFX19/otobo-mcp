@@ -14,6 +14,113 @@ function errorResult(error: unknown) {
   return jsonResult({ error: message }, true);
 }
 
+// --- Helpers: article post-processing -------------------------------------
+// These run client-side on the MCP server after a TicketGet response,
+// to keep responses small enough for LLM context windows.
+
+function stripHtml(html: string): string {
+  if (!html) return html;
+  return html
+    .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, "")
+    .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, "")
+    .replace(/<!--[\s\S]*?-->/g, "")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/p>/gi, "\n\n")
+    .replace(/<\/div>/gi, "\n")
+    .replace(/<\/li>/gi, "\n")
+    .replace(/<\/h[1-6]>/gi, "\n\n")
+    .replace(/<[^>]+>/g, "")
+    .replace(/&nbsp;/g, " ")
+    .replace(/&amp;/g, "&")
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&#39;/g, "'")
+    .replace(/&#(\d+);/g, (_, n) => String.fromCharCode(parseInt(n, 10)))
+    .replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCharCode(parseInt(n, 16)))
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+interface ArticleProcessOptions {
+  limit?: number;
+  order?: "newest_first" | "oldest_first";
+  senderTypes?: string[];
+  stripHtml?: boolean;
+}
+
+function processTicketArticles(
+  result: { Ticket?: Record<string, unknown>[] } & Record<string, unknown>,
+  options: ArticleProcessOptions
+): Record<string, unknown> {
+  const tickets = result.Ticket || [];
+  if (tickets.length === 0) return result;
+
+  const ticket = tickets[0];
+  if (!ticket || !Array.isArray((ticket as Record<string, unknown>).Article)) {
+    return result;
+  }
+
+  let articles = (ticket as Record<string, unknown>).Article as Record<string, unknown>[];
+  const totalCount = articles.length;
+
+  // Filter by sender type
+  let filteredCount = totalCount;
+  if (options.senderTypes && options.senderTypes.length > 0) {
+    const allowed = new Set(options.senderTypes.map((s) => s.toLowerCase()));
+    articles = articles.filter((a) => {
+      const st = typeof a.SenderType === "string" ? a.SenderType.toLowerCase() : "";
+      return allowed.has(st);
+    });
+    filteredCount = articles.length;
+  }
+
+  // Otobo returns articles oldest_first (chronological); reverse for newest_first
+  if (options.order !== "oldest_first") {
+    articles = articles.slice().reverse();
+  }
+
+  // Limit
+  if (typeof options.limit === "number" && options.limit >= 0) {
+    articles = articles.slice(0, options.limit);
+  }
+
+  // Strip HTML from bodies
+  if (options.stripHtml !== false) {
+    articles = articles.map((a) => {
+      const newArt: Record<string, unknown> = { ...a };
+      const contentType = typeof a.ContentType === "string" ? a.ContentType.toLowerCase() : "";
+      const mimeType = typeof a.MimeType === "string" ? a.MimeType.toLowerCase() : "";
+      const isHtml = contentType.includes("text/html") || mimeType.includes("text/html");
+
+      if (typeof a.Body === "string") {
+        if (isHtml || /<\w+[\s>\/]/.test(a.Body)) {
+          newArt.Body = stripHtml(a.Body);
+        }
+      }
+      // Drop separate HTML body fields if present
+      delete newArt.BodyHtml;
+      delete newArt.HtmlBody;
+      return newArt;
+    });
+  }
+
+  const newTicket = { ...(ticket as Record<string, unknown>), Article: articles };
+
+  return {
+    ...result,
+    Ticket: [newTicket],
+    _articles_meta: {
+      total_articles: totalCount,
+      returned_articles: articles.length,
+      filtered_by_sender_type: filteredCount !== totalCount,
+      order: options.order || "newest_first",
+      html_stripped: options.stripHtml !== false,
+    },
+  };
+}
+
 export function registerTools(server: McpServer, client: OtoboClient) {
   // --- Core Ticket Tools ---
 
@@ -85,21 +192,40 @@ export function registerTools(server: McpServer, client: OtoboClient) {
 
   server.tool(
     "get_ticket",
-    "Get full ticket details by TicketID, including articles (communication history) and dynamic fields",
+    "Get full ticket details by TicketID, including articles (communication history) and dynamic fields. By default returns the 7 newest articles with HTML stripped to plaintext, to keep responses manageable for tickets with long mail threads.",
     {
       ticket_id: z.string().describe("The Otobo ticket ID"),
-      include_articles: z.boolean().optional().describe("Include all articles/messages (default: true)"),
+      include_articles: z.boolean().optional().describe("Include articles/messages (default: true)"),
       include_dynamic_fields: z.boolean().optional().describe("Include dynamic fields (default: true)"),
       extended: z.boolean().optional().describe("Include extended information (default: false)"),
+      article_limit: z.number().min(0).max(100).optional().describe("Maximum number of articles to return (default: 7). Set to 0 to return only ticket metadata, no articles."),
+      article_order: z.enum(["newest_first", "oldest_first"]).optional().describe("Article order. 'newest_first' (default) shows the most recent activity first. 'oldest_first' for chronological reading."),
+      article_sender_types: z.array(z.enum(["customer", "agent", "system"])).optional().describe("Filter articles by sender type. E.g. ['customer'] for only customer mails, or ['customer','agent'] to skip system noise."),
+      strip_html: z.boolean().optional().describe("Strip HTML tags from article bodies, returning plaintext only (default: true). Saves significant tokens on long mail threads."),
     },
     async (params) => {
       try {
+        const includeArticles = params.include_articles !== false;
+        const articleLimit = typeof params.article_limit === "number" ? params.article_limit : 7;
+
         const result = await client.ticketGet(params.ticket_id, {
-          AllArticles: params.include_articles !== false,
+          AllArticles: includeArticles && articleLimit > 0,
           DynamicFields: params.include_dynamic_fields !== false,
           Extended: params.extended,
         });
-        return jsonResult(result);
+
+        if (!includeArticles || articleLimit === 0) {
+          return jsonResult(result);
+        }
+
+        const processed = processTicketArticles(result, {
+          limit: articleLimit,
+          order: params.article_order || "newest_first",
+          senderTypes: params.article_sender_types,
+          stripHtml: params.strip_html !== false,
+        });
+
+        return jsonResult(processed);
       } catch (error) {
         return errorResult(error);
       }
@@ -214,14 +340,30 @@ export function registerTools(server: McpServer, client: OtoboClient) {
 
   server.tool(
     "get_ticket_history",
-    "Get the full change history of a ticket (who changed what, when)",
+    "Get the full change history of a ticket (who changed what, when). Articles are filtered by default like in get_ticket to keep responses manageable.",
     {
       ticket_id: z.string().describe("The Otobo ticket ID"),
+      article_limit: z.number().min(0).max(100).optional().describe("Maximum number of articles to return alongside history (default: 7). Set to 0 to return only history without article bodies."),
+      article_order: z.enum(["newest_first", "oldest_first"]).optional().describe("Article order (default: 'newest_first')"),
+      article_sender_types: z.array(z.enum(["customer", "agent", "system"])).optional().describe("Filter articles by sender type"),
+      strip_html: z.boolean().optional().describe("Strip HTML from article bodies (default: true)"),
     },
     async (params) => {
       try {
         const result = await client.ticketHistoryGet(params.ticket_id);
-        return jsonResult(result);
+        const articleLimit = typeof params.article_limit === "number" ? params.article_limit : 7;
+
+        const processed = processTicketArticles(
+          result as { Ticket?: Record<string, unknown>[] } & Record<string, unknown>,
+          {
+            limit: articleLimit,
+            order: params.article_order || "newest_first",
+            senderTypes: params.article_sender_types,
+            stripHtml: params.strip_html !== false,
+          }
+        );
+
+        return jsonResult(processed);
       } catch (error) {
         return errorResult(error);
       }
