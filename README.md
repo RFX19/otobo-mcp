@@ -366,6 +366,87 @@ curl -X POST \
 
 You should get a JSON response with ticket IDs.
 
+## Sending Customer Replies via OTOBO Notifications
+
+The OTOBO REST API's `TicketUpdate` and `TicketCreate` operations write article data to the database but do NOT trigger SMTP email sending — that pipeline is only invoked by OTOBO's frontend `AgentTicketCompose` action or by its Notification engine.
+
+This server's `update_ticket` and `create_ticket` tools can write to DynamicFields, which fire `TicketDynamicFieldUpdate_<FieldName>` events. By configuring an OTOBO Notification to listen for that event, you can send real customer-facing emails through your LLM with proper threading, queue email address, and SMTP logging — without needing custom OTOBO modules or external SMTP setup.
+
+### Setup
+
+#### 1. Create a DynamicField for the reply draft
+
+In Otobo, navigate to **Admin → Ticket Settings → Dynamic Fields**:
+
+- Select **Ticket** → **Textarea** → **Add**
+- **Name**: `MCPReplyDraft` (recommended convention — but any name works as long as it matches your tool call)
+- **Label**: `MCP Reply Draft`
+- **Validity**: `valid`
+- **Rows / Columns**: e.g. 15 / 80
+
+Save.
+
+#### 2. Make the field visible in the agent UI (optional, helpful for debugging)
+
+- **Admin → System Configuration**
+- Search for: `Ticket::Frontend::AgentTicketZoom###DynamicField`
+- Add `MCPReplyDraft` with value `1`
+- Deploy the configuration
+
+#### 3. Configure the Notification
+
+**Admin → Communication & Notifications → Ticket Notifications → Add**
+
+- **Name**: `Send customer reply (MCPReplyDraft)`
+- **Event**: `TicketDynamicFieldUpdate_MCPReplyDraft`
+- **Recipients → Send to**: `Customer User of the Ticket`
+- **Notification methods → Email**: enabled
+- **Email sender**: `System address` (uses the queue's configured email address)
+
+Notification template (under the per-language block):
+
+- **Subject**: `Re: <OTOBO_TICKET_Title> [Ticket#<OTOBO_TICKET_TicketNumber>]`
+- **Body**: switch the rich text editor to **Source Mode** before editing — otherwise the editor strips the placeholder tag thinking it's unknown HTML. Then enter:
+
+  ```html
+  <div style="white-space: pre-wrap; font-family: sans-serif;">&lt;OTOBO_TICKET_DynamicField_MCPReplyDraft_Value&gt;</div>
+  ```
+
+  The HTML entities `&lt;` and `&gt;` are required — OTOBO decodes them to `<` and `>` at render time, but the raw `<` would otherwise be interpreted as a malformed HTML tag and stripped by the editor on save.
+
+Save the notification.
+
+#### 4. Send a reply
+
+The LLM can now send an email reply by calling `update_ticket` **as an isolated call** (no other ticket fields in the same call — see gotchas below):
+
+```json
+{
+  "ticket_id": "12345",
+  "dynamic_fields": [
+    {
+      "name": "MCPReplyDraft",
+      "value": "Dear customer,\n\nthank you for reaching out. ...\n\nKind regards,\nYour Name"
+    }
+  ]
+}
+```
+
+The notification fires synchronously: the email is built using the field content, sent via OTOBO's SMTP pipeline, and logged as an outgoing article in the ticket history. When the customer replies, OTOBO's PostMaster automatically routes the reply back to the same ticket via the ticket number in the subject.
+
+### Notes and gotchas
+
+- **Set the reply field in an isolated call.** Combining the DynamicField update with a state change, lock change, or other ticket field changes in the same `update_ticket` call is unreliable — the notification may not fire (depends on internal processing order in your OTOBO version). Always send the reply DynamicField alone, then do any state/lock/owner changes in a second call afterwards.
+- **The notification fires only on actual value changes.** Setting the DynamicField to the same value it already has produces no event — OTOBO de-duplicates. If you need to re-send the same text (e.g. after a misconfiguration), introduce a minimal change like a trailing whitespace; do NOT set the value to an empty string as a "reset" — that triggers the notification with an empty body and sends an empty email to the customer.
+- **No automatic queue signature.** The Notification engine does NOT append the queue's `Signature` field — that's only added by frontend `AgentTicketCompose`. Either include a short signature at the end of the reply text, or hard-code a footer block (with HRA / VAT-ID / legal info) directly in the notification template body. There is no `<OTOBO_QUEUE_Signature>` placeholder for notifications.
+- **CKEditor strips unknown tags.** Always edit the notification body in Source Mode and use HTML-encoded angle brackets (`&lt;` / `&gt;`) around OTOBO placeholders. WYSIWYG mode silently strips them.
+- **Renaming the DynamicField requires updating the notification event.** If you rename the field, OTOBO does NOT automatically update the notification's event subscription — the event field becomes empty and the notification stops firing silently. Always re-select the event from the dropdown after renaming.
+- **State name strings are language-dependent.** OTOBO installations with German (or other localized) configurations may have state names like `geschlossen - erfolgreich` instead of `closed successful`. Use `list_states` to discover the valid values for your instance.
+- **Threading depends on the subject pattern.** The `Re: ... [Ticket#NNN]` format is required so OTOBO's PostMaster can recognize incoming replies and route them to the correct ticket.
+- **API user permissions.** The agent account only needs `note`-level permission on the queue (or higher). The `compose` permission is NOT required for this pattern, since the notification engine — not the user — performs the SMTP send.
+- **Notification scope.** By default the notification fires for every ticket where the DynamicField is updated. To restrict to specific queues, use the notification's **Ticket Filter → Queue** setting.
+- **Outbound side effects.** Other configured notifications may also fire on ticket actions (e.g. "Owner Updated"). Review your `Admin → Ticket Notifications` list to make sure no unintended notifications target customers.
+
 ## Troubleshooting
 
 ### "Missing required environment variable"

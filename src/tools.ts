@@ -234,7 +234,7 @@ export function registerTools(server: McpServer, client: OtoboClient) {
 
   server.tool(
     "create_ticket",
-    "Create a new Otobo ticket with a first article (message)",
+    "Create a new Otobo ticket with a first article (message). Can also set DynamicFields on creation; if a DynamicField has an OTOBO Notification configured to fire on its update event, that notification will trigger immediately (useful for automated acknowledgement emails).",
     {
       title: z.string().describe("Ticket title/subject"),
       queue: z.string().describe("Queue name, e.g. 'Raw' or 'Postmaster'"),
@@ -250,7 +250,7 @@ export function registerTools(server: McpServer, client: OtoboClient) {
       communication_channel: z.string().optional().describe("Communication channel: 'Email', 'Phone', 'Internal' (default: 'Email')"),
       sender_type: z.string().optional().describe("Sender type: 'agent', 'system', 'customer' (default: 'customer')"),
       dynamic_fields: z.array(z.object({
-        name: z.string().describe("DynamicField technical name (without 'DynamicField_' prefix), e.g. 'MATWClaudeReplyDraft'"),
+        name: z.string().describe("DynamicField technical name (without 'DynamicField_' prefix), e.g. 'MCPReplyDraft'"),
         value: z.union([z.string(), z.array(z.string())]).describe("Field value. String for text/textarea/dropdown, array of strings for multi-select."),
       })).optional().describe("Set DynamicField values on creation. Useful for triggering OTOBO Notifications that fire on DynamicFieldUpdate events."),
     },
@@ -291,7 +291,7 @@ export function registerTools(server: McpServer, client: OtoboClient) {
 
   server.tool(
     "update_ticket",
-    "Update an existing Otobo ticket (change state, queue, priority, owner, set DynamicFields, etc.) and optionally add a new article. Updating DynamicFields can trigger OTOBO Notifications that send emails — useful pattern: configure a 'TicketDynamicFieldUpdate_FieldName' notification that mails the field's content to the customer.",
+    "Update an existing Otobo ticket (change state, queue, priority, owner, set DynamicFields, etc.) and optionally add a new article.\n\nIMPORTANT — Sending customer reply emails: A normal `article_body` with `communication_channel: 'Email'` only writes the article to the database; it does NOT trigger SMTP send. To actually send an email reply to the customer, set a DynamicField that has an associated OTOBO Notification configured to fire on its update event (`TicketDynamicFieldUpdate_<FieldName>`). The notification sends the email via OTOBO's full SMTP pipeline with proper threading headers. By convention, this server's README recommends the DynamicField name 'MCPReplyDraft' — but the actual field name depends on your OTOBO setup. See the project README section 'Sending Customer Replies via OTOBO Notifications' for full setup. Include a short signature at the end of the reply text, since the OTOBO Notification engine does NOT append queue signatures automatically.",
     {
       ticket_id: z.string().describe("The Otobo ticket ID to update"),
       title: z.string().optional().describe("New ticket title"),
@@ -305,9 +305,9 @@ export function registerTools(server: McpServer, client: OtoboClient) {
       customer_user: z.string().optional().describe("Change customer user"),
       pending_time: z.string().optional().describe("Pending time for pending states (YYYY-MM-DD HH:MM:SS)"),
       dynamic_fields: z.array(z.object({
-        name: z.string().describe("DynamicField technical name (without 'DynamicField_' prefix), e.g. 'MATWClaudeReplyDraft'"),
+        name: z.string().describe("DynamicField technical name (without 'DynamicField_' prefix), e.g. 'MCPReplyDraft'"),
         value: z.union([z.string(), z.array(z.string())]).describe("Field value. String for text/textarea/dropdown, array of strings for multi-select. Pass empty string to clear."),
-      })).optional().describe("Set or update DynamicField values. Setting a DynamicField fires the OTOBO event 'TicketDynamicFieldUpdate_<FieldName>' which can be used to trigger Notifications (e.g. send a customer reply)."),
+      })).optional().describe("Set or update DynamicField values. Setting a DynamicField fires the OTOBO event 'TicketDynamicFieldUpdate_<FieldName>' which can be used to trigger Notifications (e.g. send a customer reply — see README)."),
       article_subject: z.string().optional().describe("Subject for a new article to add"),
       article_body: z.string().optional().describe("Body for a new article to add"),
       article_content_type: z.string().optional().describe("Article content type (default: 'text/plain; charset=utf-8')"),
