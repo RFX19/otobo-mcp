@@ -130,12 +130,17 @@ export class OtoboClient {
 
   async ticketCreate(
     ticket: TicketData & { Title: string; Queue: string; State: string; Priority: string; CustomerUser: string },
-    article: TicketArticle
+    article: TicketArticle,
+    dynamicFields?: Array<{ Name: string; Value: string | string[] }>
   ): Promise<{ TicketID: string; TicketNumber: string; ArticleID: string }> {
-    return this.request("TicketCreate", {
+    const payload: Record<string, unknown> = {
       Ticket: ticket,
       Article: article,
-    });
+    };
+    if (dynamicFields && dynamicFields.length > 0) {
+      payload.DynamicField = dynamicFields;
+    }
+    return this.request("TicketCreate", payload);
   }
 
   async ticketGet(
@@ -160,7 +165,8 @@ export class OtoboClient {
   async ticketUpdate(
     ticketID: string | number,
     ticket?: TicketData,
-    article?: TicketArticle
+    article?: TicketArticle,
+    dynamicFields?: Array<{ Name: string; Value: string | string[] }>
   ): Promise<{ TicketID: string; TicketNumber: string; ArticleID?: string }> {
     const payload: Record<string, unknown> = {
       TicketID: String(ticketID),
@@ -168,6 +174,9 @@ export class OtoboClient {
 
     if (ticket) payload.Ticket = ticket;
     if (article) payload.Article = article;
+    if (dynamicFields && dynamicFields.length > 0) {
+      payload.DynamicField = dynamicFields;
+    }
 
     return this.request("TicketUpdate", payload);
   }

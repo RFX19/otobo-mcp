@@ -249,27 +249,38 @@ export function registerTools(server: McpServer, client: OtoboClient) {
       article_content_type: z.string().optional().describe("Content type (default: 'text/plain; charset=utf-8')"),
       communication_channel: z.string().optional().describe("Communication channel: 'Email', 'Phone', 'Internal' (default: 'Email')"),
       sender_type: z.string().optional().describe("Sender type: 'agent', 'system', 'customer' (default: 'customer')"),
+      dynamic_fields: z.array(z.object({
+        name: z.string().describe("DynamicField technical name (without 'DynamicField_' prefix), e.g. 'MATWClaudeReplyDraft'"),
+        value: z.union([z.string(), z.array(z.string())]).describe("Field value. String for text/textarea/dropdown, array of strings for multi-select."),
+      })).optional().describe("Set DynamicField values on creation. Useful for triggering OTOBO Notifications that fire on DynamicFieldUpdate events."),
     },
     async (params) => {
       try {
+        const ticketData: Record<string, unknown> = {
+          Title: params.title,
+          Queue: params.queue,
+          State: params.state || "new",
+          Priority: params.priority || "3 normal",
+          CustomerUser: params.customer_user,
+          Type: params.type,
+          Owner: params.owner,
+          Responsible: params.responsible,
+        };
+
+        const dynamicFields = params.dynamic_fields && params.dynamic_fields.length > 0
+          ? params.dynamic_fields.map((df) => ({ Name: df.name, Value: df.value }))
+          : undefined;
+
         const result = await client.ticketCreate(
-          {
-            Title: params.title,
-            Queue: params.queue,
-            State: params.state || "new",
-            Priority: params.priority || "3 normal",
-            CustomerUser: params.customer_user,
-            Type: params.type,
-            Owner: params.owner,
-            Responsible: params.responsible,
-          },
+          ticketData as unknown as Parameters<typeof client.ticketCreate>[0],
           {
             Subject: params.article_subject || params.title,
             Body: params.article_body,
             ContentType: params.article_content_type || "text/plain; charset=utf-8",
             CommunicationChannel: params.communication_channel || "Email",
             SenderType: params.sender_type || "customer",
-          }
+          },
+          dynamicFields
         );
         return jsonResult(result);
       } catch (error) {
@@ -280,7 +291,7 @@ export function registerTools(server: McpServer, client: OtoboClient) {
 
   server.tool(
     "update_ticket",
-    "Update an existing Otobo ticket (change state, queue, priority, owner, etc.) and optionally add a new article",
+    "Update an existing Otobo ticket (change state, queue, priority, owner, set DynamicFields, etc.) and optionally add a new article. Updating DynamicFields can trigger OTOBO Notifications that send emails — useful pattern: configure a 'TicketDynamicFieldUpdate_FieldName' notification that mails the field's content to the customer.",
     {
       ticket_id: z.string().describe("The Otobo ticket ID to update"),
       title: z.string().optional().describe("New ticket title"),
@@ -293,6 +304,10 @@ export function registerTools(server: McpServer, client: OtoboClient) {
       type: z.string().optional().describe("New ticket type"),
       customer_user: z.string().optional().describe("Change customer user"),
       pending_time: z.string().optional().describe("Pending time for pending states (YYYY-MM-DD HH:MM:SS)"),
+      dynamic_fields: z.array(z.object({
+        name: z.string().describe("DynamicField technical name (without 'DynamicField_' prefix), e.g. 'MATWClaudeReplyDraft'"),
+        value: z.union([z.string(), z.array(z.string())]).describe("Field value. String for text/textarea/dropdown, array of strings for multi-select. Pass empty string to clear."),
+      })).optional().describe("Set or update DynamicField values. Setting a DynamicField fires the OTOBO event 'TicketDynamicFieldUpdate_<FieldName>' which can be used to trigger Notifications (e.g. send a customer reply)."),
       article_subject: z.string().optional().describe("Subject for a new article to add"),
       article_body: z.string().optional().describe("Body for a new article to add"),
       article_content_type: z.string().optional().describe("Article content type (default: 'text/plain; charset=utf-8')"),
@@ -313,6 +328,10 @@ export function registerTools(server: McpServer, client: OtoboClient) {
         if (params.customer_user) ticketData.CustomerUser = params.customer_user;
         if (params.pending_time) ticketData.PendingTime = params.pending_time;
 
+        const dynamicFields = params.dynamic_fields && params.dynamic_fields.length > 0
+          ? params.dynamic_fields.map((df) => ({ Name: df.name, Value: df.value }))
+          : undefined;
+
         let article;
         if (params.article_body) {
           article = {
@@ -327,7 +346,8 @@ export function registerTools(server: McpServer, client: OtoboClient) {
         const result = await client.ticketUpdate(
           params.ticket_id,
           Object.keys(ticketData).length > 0 ? ticketData : undefined,
-          article
+          article,
+          dynamicFields
         );
         return jsonResult(result);
       } catch (error) {
