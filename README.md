@@ -52,6 +52,7 @@ The server is configured via environment variables:
 | `OTOBO_PASSWORD` | Yes | — | Agent password |
 | `OTOBO_WEBSERVICE` | No | `GenericTicketConnectorREST` | Web service name configured in Otobo |
 | `OTOBO_UNSAFE_SSL` | No | `false` | Set to `true` to allow self-signed/internal SSL certificates |
+| `OTOBO_DEFAULT_CLOSE_STATE` | No | `closed successful` | Default state used by `close_ticket` and `close_tickets_bulk` when no `state` is passed. Set to your localized variant (e.g. `geschlossen - erfolgreich`) on installations where the English default is not configured. Discover valid values with `list_states`. |
 
 Copy `.env.example` to `.env` and fill in your values:
 

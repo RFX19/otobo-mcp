@@ -32,7 +32,9 @@ const client = new OtoboClient({
   webservice: getEnv("OTOBO_WEBSERVICE", "GenericTicketConnectorREST"),
 });
 
-registerTools(server, client);
+registerTools(server, client, {
+  defaultCloseState: process.env.OTOBO_DEFAULT_CLOSE_STATE,
+});
 
 async function main() {
   const transport = new StdioServerTransport();

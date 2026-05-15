@@ -122,7 +122,17 @@ function processTicketArticles(
   };
 }
 
-export function registerTools(server: McpServer, client: OtoboClient) {
+export interface RegisterToolsConfig {
+  /** Default ticket state used when closing without an explicit state. Falls back to "closed successful". */
+  defaultCloseState?: string;
+}
+
+export function registerTools(
+  server: McpServer,
+  client: OtoboClient,
+  config: RegisterToolsConfig = {}
+) {
+  const defaultCloseState = config.defaultCloseState || "closed successful";
   // --- Core Ticket Tools ---
 
   server.tool(
@@ -507,17 +517,17 @@ export function registerTools(server: McpServer, client: OtoboClient) {
 
   server.tool(
     "close_ticket",
-    "Close a ticket by setting its state to 'closed successful' and optionally adding a closing note",
+    `Close a ticket by setting its state to '${defaultCloseState}' and optionally adding a closing note. The default state is configurable via the OTOBO_DEFAULT_CLOSE_STATE env var (useful for localized installations where 'closed successful' is not defined — e.g. set to 'geschlossen - erfolgreich' on German setups).`,
     {
       ticket_id: z.string().describe("The Otobo ticket ID to close"),
       note: z.string().optional().describe("Optional closing note/reason"),
-      state: z.string().optional().describe("Close state (default: 'closed successful'). Use 'closed unsuccessful' for unresolved tickets."),
+      state: z.string().optional().describe(`Close state (default: '${defaultCloseState}'). Use 'closed unsuccessful' for unresolved tickets.`),
     },
     async (params) => {
       try {
         const result = await closeTicket(client, {
           ticketId: params.ticket_id,
-          state: params.state,
+          state: params.state || defaultCloseState,
           note: params.note,
         });
         return jsonResult(result);
@@ -566,15 +576,15 @@ export function registerTools(server: McpServer, client: OtoboClient) {
 
   server.tool(
     "close_tickets_bulk",
-    "Close multiple tickets in parallel. Intended for routine bulk close-outs (e.g. dozens of Amazon-FBA notifications, payout-confirmation mails, automated alerts). Each ticket gets an individual status in the response — a single failure does not abort the batch. For single tickets, prefer `close_ticket`. Default close state is 'geschlossen - erfolgreich' (German), since 'closed successful' is not configured on this OTOBO instance.",
+    `Close multiple tickets in parallel. Intended for routine bulk close-outs (e.g. dozens of Amazon-FBA notifications, payout-confirmation mails, automated alerts). Each ticket gets an individual status in the response — a single failure does not abort the batch. For single tickets, prefer \`close_ticket\`. Default close state is '${defaultCloseState}' (configurable via the OTOBO_DEFAULT_CLOSE_STATE env var — set this for localized installations where 'closed successful' is not defined, e.g. 'geschlossen - erfolgreich' on German setups).`,
     {
       ticket_ids: ticketIdsSchema,
-      state: z.string().optional().describe("Close state (default: 'geschlossen - erfolgreich')"),
+      state: z.string().optional().describe(`Close state (default: '${defaultCloseState}')`),
       note: z.string().optional().describe("Optional closing note added to every ticket"),
     },
     async (params) => {
       try {
-        const state = params.state || "geschlossen - erfolgreich";
+        const state = params.state || defaultCloseState;
         const response = await runBulk(params.ticket_ids, (ticketId) =>
           closeTicket(client, { ticketId, state, note: params.note })
         );
