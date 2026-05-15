@@ -1,6 +1,7 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { OtoboClient } from "./otobo-client.js";
+import { addNote, closeTicket, runBulk, updateTicket } from "./services.js";
 
 function jsonResult(data: unknown, isError = false) {
   return {
@@ -121,7 +122,17 @@ function processTicketArticles(
   };
 }
 
-export function registerTools(server: McpServer, client: OtoboClient) {
+export interface RegisterToolsConfig {
+  /** Default ticket state used when closing without an explicit state. Falls back to "closed successful". */
+  defaultCloseState?: string;
+}
+
+export function registerTools(
+  server: McpServer,
+  client: OtoboClient,
+  config: RegisterToolsConfig = {}
+) {
+  const defaultCloseState = config.defaultCloseState || "closed successful";
   // --- Core Ticket Tools ---
 
   server.tool(
@@ -316,39 +327,25 @@ export function registerTools(server: McpServer, client: OtoboClient) {
     },
     async (params) => {
       try {
-        const ticketData: Record<string, unknown> = {};
-        if (params.title) ticketData.Title = params.title;
-        if (params.queue) ticketData.Queue = params.queue;
-        if (params.state) ticketData.State = params.state;
-        if (params.priority) ticketData.Priority = params.priority;
-        if (params.owner) ticketData.Owner = params.owner;
-        if (params.responsible) ticketData.Responsible = params.responsible;
-        if (params.lock) ticketData.Lock = params.lock;
-        if (params.type) ticketData.Type = params.type;
-        if (params.customer_user) ticketData.CustomerUser = params.customer_user;
-        if (params.pending_time) ticketData.PendingTime = params.pending_time;
-
-        const dynamicFields = params.dynamic_fields && params.dynamic_fields.length > 0
-          ? params.dynamic_fields.map((df) => ({ Name: df.name, Value: df.value }))
-          : undefined;
-
-        let article;
-        if (params.article_body) {
-          article = {
-            Subject: params.article_subject || "Update",
-            Body: params.article_body,
-            ContentType: params.article_content_type || "text/plain; charset=utf-8",
-            CommunicationChannel: params.communication_channel || "Internal",
-            SenderType: params.sender_type || "agent",
-          };
-        }
-
-        const result = await client.ticketUpdate(
-          params.ticket_id,
-          Object.keys(ticketData).length > 0 ? ticketData : undefined,
-          article,
-          dynamicFields
-        );
+        const result = await updateTicket(client, {
+          ticketId: params.ticket_id,
+          title: params.title,
+          queue: params.queue,
+          state: params.state,
+          priority: params.priority,
+          owner: params.owner,
+          responsible: params.responsible,
+          lock: params.lock,
+          type: params.type,
+          customerUser: params.customer_user,
+          pendingTime: params.pending_time,
+          dynamicFields: params.dynamic_fields,
+          articleSubject: params.article_subject,
+          articleBody: params.article_body,
+          articleContentType: params.article_content_type,
+          communicationChannel: params.communication_channel,
+          senderType: params.sender_type,
+        });
         return jsonResult(result);
       } catch (error) {
         return errorResult(error);
@@ -520,31 +517,19 @@ export function registerTools(server: McpServer, client: OtoboClient) {
 
   server.tool(
     "close_ticket",
-    "Close a ticket by setting its state to 'closed successful' and optionally adding a closing note",
+    `Close a ticket by setting its state to '${defaultCloseState}' and optionally adding a closing note. The default state is configurable via the OTOBO_DEFAULT_CLOSE_STATE env var (useful for localized installations where 'closed successful' is not defined — e.g. set to 'geschlossen - erfolgreich' on German setups).`,
     {
       ticket_id: z.string().describe("The Otobo ticket ID to close"),
       note: z.string().optional().describe("Optional closing note/reason"),
-      state: z.string().optional().describe("Close state (default: 'closed successful'). Use 'closed unsuccessful' for unresolved tickets."),
+      state: z.string().optional().describe(`Close state (default: '${defaultCloseState}'). Use 'closed unsuccessful' for unresolved tickets.`),
     },
     async (params) => {
       try {
-        const closeState = params.state || "closed successful";
-        let article;
-        if (params.note) {
-          article = {
-            Subject: "Ticket closed",
-            Body: params.note,
-            ContentType: "text/plain; charset=utf-8",
-            CommunicationChannel: "Internal",
-            SenderType: "agent",
-          };
-        }
-
-        const result = await client.ticketUpdate(
-          params.ticket_id,
-          { State: closeState },
-          article
-        );
+        const result = await closeTicket(client, {
+          ticketId: params.ticket_id,
+          state: params.state || defaultCloseState,
+          note: params.note,
+        });
         return jsonResult(result);
       } catch (error) {
         return errorResult(error);
@@ -563,18 +548,118 @@ export function registerTools(server: McpServer, client: OtoboClient) {
     },
     async (params) => {
       try {
-        const result = await client.ticketUpdate(
-          params.ticket_id,
-          undefined,
-          {
-            Subject: params.subject || "Note",
-            Body: params.body,
-            ContentType: params.content_type || "text/plain; charset=utf-8",
-            CommunicationChannel: "Internal",
-            SenderType: "agent",
-          }
-        );
+        const result = await addNote(client, {
+          ticketId: params.ticket_id,
+          body: params.body,
+          subject: params.subject,
+          contentType: params.content_type,
+        });
         return jsonResult(result);
+      } catch (error) {
+        return errorResult(error);
+      }
+    }
+  );
+
+  // --- Bulk Tools -----------------------------------------------------------
+  // These run multiple TicketUpdate calls in parallel with a concurrency cap.
+  // Use for routine bulk operations (closing batches of Amazon FBA notification
+  // tickets, payout-confirmation mails, queue moves, mass priority changes).
+  // For single tickets, prefer close_ticket / update_ticket / add_note —
+  // they have richer descriptions and clearer error semantics.
+
+  const ticketIdsSchema = z
+    .array(z.string())
+    .min(1)
+    .max(100)
+    .describe("Ticket IDs to operate on (1-100). All tickets are processed in parallel (concurrency cap 10).");
+
+  server.tool(
+    "close_tickets_bulk",
+    `Close multiple tickets in parallel. Intended for routine bulk close-outs (e.g. dozens of Amazon-FBA notifications, payout-confirmation mails, automated alerts). Each ticket gets an individual status in the response — a single failure does not abort the batch. For single tickets, prefer \`close_ticket\`. Default close state is '${defaultCloseState}' (configurable via the OTOBO_DEFAULT_CLOSE_STATE env var — set this for localized installations where 'closed successful' is not defined, e.g. 'geschlossen - erfolgreich' on German setups).`,
+    {
+      ticket_ids: ticketIdsSchema,
+      state: z.string().optional().describe(`Close state (default: '${defaultCloseState}')`),
+      note: z.string().optional().describe("Optional closing note added to every ticket"),
+    },
+    async (params) => {
+      try {
+        const state = params.state || defaultCloseState;
+        const response = await runBulk(params.ticket_ids, (ticketId) =>
+          closeTicket(client, { ticketId, state, note: params.note })
+        );
+        return jsonResult(response);
+      } catch (error) {
+        return errorResult(error);
+      }
+    }
+  );
+
+  server.tool(
+    "update_tickets_bulk",
+    "Apply the same ticket-level updates to multiple tickets in parallel — bulk queue moves, bulk reassign, bulk priority changes, bulk DynamicField updates. Article-specific fields are NOT supported here; use `add_notes_bulk` to attach the same note to many tickets. Each ticket gets an individual status in the response. For single tickets, prefer `update_ticket`.",
+    {
+      ticket_ids: ticketIdsSchema,
+      title: z.string().optional().describe("New ticket title (applied to all)"),
+      queue: z.string().optional().describe("Move all tickets to this queue"),
+      state: z.string().optional().describe("New state for all tickets"),
+      priority: z.string().optional().describe("New priority for all tickets"),
+      owner: z.string().optional().describe("New owner agent login for all tickets"),
+      responsible: z.string().optional().describe("New responsible agent login for all tickets"),
+      lock: z.string().optional().describe("Lock state: 'lock' or 'unlock'"),
+      type: z.string().optional().describe("New ticket type"),
+      customer_user: z.string().optional().describe("Change customer user for all tickets"),
+      pending_time: z.string().optional().describe("Pending time (YYYY-MM-DD HH:MM:SS)"),
+      dynamic_fields: z.array(z.object({
+        name: z.string().describe("DynamicField technical name (without 'DynamicField_' prefix)"),
+        value: z.union([z.string(), z.array(z.string())]).describe("Field value applied to every ticket"),
+      })).optional().describe("Set the same DynamicField values on every ticket. Note: per-ticket reply drafts via MCPReplyDraft do NOT make sense here — every recipient would receive identical text."),
+    },
+    async (params) => {
+      try {
+        const response = await runBulk(params.ticket_ids, (ticketId) =>
+          updateTicket(client, {
+            ticketId,
+            title: params.title,
+            queue: params.queue,
+            state: params.state,
+            priority: params.priority,
+            owner: params.owner,
+            responsible: params.responsible,
+            lock: params.lock,
+            type: params.type,
+            customerUser: params.customer_user,
+            pendingTime: params.pending_time,
+            dynamicFields: params.dynamic_fields,
+          })
+        );
+        return jsonResult(response);
+      } catch (error) {
+        return errorResult(error);
+      }
+    }
+  );
+
+  server.tool(
+    "add_notes_bulk",
+    "Add the same internal note to multiple tickets in parallel. Useful for bulk-tagging tickets with the same audit comment (e.g. 'reviewed by AI', 'related to incident XY'). Each ticket gets an individual status in the response. For single tickets, prefer `add_note`.",
+    {
+      ticket_ids: ticketIdsSchema,
+      body: z.string().describe("Note body text (applied to every ticket)"),
+      subject: z.string().optional().describe("Note subject (default: 'Note')"),
+      content_type: z.string().optional().describe("Content type (default: 'text/plain; charset=utf-8')"),
+    },
+    async (params) => {
+      try {
+        const response = await runBulk(params.ticket_ids, (ticketId) =>
+          addNote(client, {
+            ticketId,
+            body: params.body,
+            subject: params.subject,
+            contentType: params.content_type,
+          })
+        );
+        return jsonResult(response);
       } catch (error) {
         return errorResult(error);
       }

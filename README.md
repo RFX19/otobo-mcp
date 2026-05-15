@@ -12,6 +12,7 @@ A [Model Context Protocol (MCP)](https://modelcontextprotocol.io/) server for [O
 - **Add internal notes** to tickets
 - **View ticket history** — full audit trail of changes
 - **List queues, states, and priorities** from your Otobo instance
+- **Bulk operations** — close, update, or note up to 100 tickets in a single call (parallelized, partial-failure tolerant)
 
 ## Prerequisites
 
@@ -51,6 +52,7 @@ The server is configured via environment variables:
 | `OTOBO_PASSWORD` | Yes | — | Agent password |
 | `OTOBO_WEBSERVICE` | No | `GenericTicketConnectorREST` | Web service name configured in Otobo |
 | `OTOBO_UNSAFE_SSL` | No | `false` | Set to `true` to allow self-signed/internal SSL certificates |
+| `OTOBO_DEFAULT_CLOSE_STATE` | No | `closed successful` | Default state used by `close_ticket` and `close_tickets_bulk` when no `state` is passed. Set to your localized variant (e.g. `geschlossen - erfolgreich`) on installations where the English default is not configured. Discover valid values with `list_states`. |
 
 Copy `.env.example` to `.env` and fill in your values:
 
@@ -89,6 +91,51 @@ cp .env.example .env
 |---|---|
 | `close_ticket` | Close a ticket with an optional note |
 | `add_note` | Add an internal note to a ticket |
+
+### Bulk Operations
+
+For routine batch work — closing dozens of Amazon-FBA notifications, payout-confirmation mails, moving many tickets between queues — the bulk tools run up to 100 tickets per call, parallelized across the OTOBO API with a concurrency cap of 10. A single failing ticket does not abort the batch; each ticket gets its own status in the response.
+
+| Tool | Description |
+|---|---|
+| `close_tickets_bulk` | Close many tickets at once (optional shared closing note) |
+| `update_tickets_bulk` | Apply the same field updates to many tickets (queue move, reassign, priority change, DynamicField set) |
+| `add_notes_bulk` | Attach the same internal note to many tickets |
+
+All three return a standardized response:
+
+```json
+{
+  "succeeded": [
+    { "ticket_id": "72336", "ticket_number": "2026051592000108" }
+  ],
+  "failed": [
+    { "ticket_id": "72337", "error": "Ticket not found" }
+  ],
+  "summary": { "total": 13, "succeeded_count": 12, "failed_count": 1 }
+}
+```
+
+For single tickets, prefer `close_ticket` / `update_ticket` / `add_note` — they have richer descriptions and clearer error semantics.
+
+**Example — close a batch of Amazon FBA notification tickets:**
+
+```json
+{
+  "ticket_ids": ["72336", "72337", "72338", "72339"],
+  "note": "Auto-closed: routine FBA inbound notification, no action needed."
+}
+```
+
+**Example — move multiple tickets to a different queue:**
+
+```json
+{
+  "ticket_ids": ["72341", "72342", "72343"],
+  "queue": "Misc",
+  "priority": "2 low"
+}
+```
 
 ## Integration Examples
 
